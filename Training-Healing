@@ -1,41 +1,101 @@
-# Compiled Lua sources
-luac.out
+local config = {
+    targetList = {"Vulconite"},
+    trainer = "Trainer",
+    spawnDelay = {min = 1000, max = 3000},
+    attackSpell = "exori hur",
+    autoTrainCommand = "!train",
+    trainCommandCooldown = {min = 60000, max = 180000},
+    checkMovement = true
+}
 
-# luarocks build files
-*.src.rock
-*.zip
-*.tar.gz
+local function toLowerCaseList(list)
+    local lowerList = {}
+    for _, value in ipairs(list) do
+        table.insert(lowerList, string.lower(value))
+    end
+    return lowerList
+end
 
-# Object files
-*.o
-*.os
-*.ko
-*.obj
-*.elf
+local function tableFind(tbl, value)
+    for _, v in ipairs(tbl) do
+        if v == value then
+            return true
+        end
+    end
+    return false
+end
 
-# Precompiled Headers
-*.gch
-*.pch
+local targetListLower = toLowerCaseList(config.targetList)
+local trainerLower = string.lower(config.trainer)
+local initialPosition = Self.Position()
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.def
-*.exp
+local function hasMoved()
+    if not config.checkMovement then return false end
+    local currentPosition = Self.Position()
+    return currentPosition.x ~= initialPosition.x or currentPosition.y ~= initialPosition.y or currentPosition.z ~= initialPosition.z
+end
 
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
+local function isWithinOneSqm(mob)
+    local playerPos = Self.Position()
+    return math.abs(playerPos.x - mob.x) <= 1 and math.abs(playerPos.y - mob.y) <= 1 and playerPos.z == mob.z
+end
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+local knownMonsters = {}
+local trainerLastAttacked = 0
+local lastTrainCommandTime = 0
 
+Module.New("Attack and Train", function(mod)
+    if hasMoved() then
+        Self.Stop()
+        Rifbot.PlaySound("alarm.wav")
+        return
+    end
+
+    local currentMonsters = Creature.iMonsters(1, false) or {}
+    local currentIds = {}
+    local trainer = nil
+    local prioritizedMonsters = {}
+
+    for _, mob in ipairs(currentMonsters) do
+        table.insert(currentIds, mob.id)
+
+        if string.lower(mob.name or "") == trainerLower then
+            trainer = mob
+        elseif tableFind(targetListLower, string.lower(mob.name or "")) then
+            table.insert(prioritizedMonsters, mob)
+        end
+    end
+
+    if #prioritizedMonsters > 0 then
+        for _, mob in ipairs(prioritizedMonsters) do
+            Creature.Attack(mob.id)
+            Self.CastSpell(config.attackSpell)
+            table.insert(knownMonsters, mob.id)
+        end
+
+        return
+    else
+        if trainer and isWithinOneSqm(trainer) then
+            wait(math.random(config.spawnDelay.min, config.spawnDelay.max))
+            local currentTime = os.time() * 1000
+            if currentTime - trainerLastAttacked >= math.random(config.spawnDelay.min, config.spawnDelay.max) then
+                Creature.Attack(trainer.id)
+                trainerLastAttacked = currentTime
+            end
+        else
+            local currentTime = os.time() * 1000
+            if currentTime - lastTrainCommandTime >= math.random(config.trainCommandCooldown.min, config.trainCommandCooldown.max) then
+                Self.Say(config.autoTrainCommand)
+                lastTrainCommandTime = currentTime
+            end
+        end
+    end
+
+    for i = #knownMonsters, 1, -1 do
+        if not tableFind(currentIds, knownMonsters[i]) then
+            table.remove(knownMonsters, i)
+        end
+    end
+
+    mod:Delay(200, 400)
+end)
